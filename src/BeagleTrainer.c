@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <libusb.h>
 #include <math.h>
+#include <ncurses.h>
 #include <sys/time.h>
 #include <sys/timerfd.h>
 #include <gsl/gsl_multifit.h>
@@ -16,13 +17,17 @@
 static volatile unsigned int is_sigint = 0;
 volatile unsigned int runSpeedThread = 0;
 volatile unsigned int runAntThread = 0;
+volatile unsigned int runDisplayThread = 0;
 volatile double currentSpeed;
+volatile double currentPower;
 volatile unsigned int currentMode = MODE_MANUAL;
 
 volatile double power_curve_a = DEFAULT_CURVE_A;
 volatile double power_curve_b = DEFAULT_CURVE_B;
 volatile double power_curve_c = DEFAULT_CURVE_C;
 volatile double power_curve_d = DEFAULT_CURVE_D;
+
+volatile char DisplayMessage[DISPLAY_MAX_MSG_SIZE];
 
 // rx_data buffer needs to be bigger than a single ANT message to handle multiple messages
 // even though we are not parsing them properly yet (max buffer size of endpoint is 64)
@@ -43,8 +48,8 @@ typedef enum { IDLE,                // Not in spindown mode
                WAIT,                // Waiting for speed > 50
                READY,               // Speed > 50, waiting for deccel
                RUNNING,             // Decelerating, storing measurements
-               OK,                  // Finished, curve fitting successful
-               ERR                  // Error, perhaps perhaps speed increased?
+               DONE,                // Finished, curve fitting successful
+               ERROR                // Error, perhaps perhaps speed increased?
              } SpinDownState;
 
 typedef struct { double time;
@@ -65,6 +70,40 @@ struct TimerInfo
     unsigned long long wakeups_missed;
 };
 
+void DrawBorders(WINDOW *screen)
+{
+    // todo: remove double borders between adjacent windows?
+
+    int x, y, i;
+
+    getmaxyx(screen, y, x);
+
+    // 4 corners
+    mvwprintw(screen, 0, 0, "+");
+    mvwprintw(screen, y - 1, 0, "+");
+    mvwprintw(screen, 0, x - 1, "+");
+    mvwprintw(screen, y - 1, x - 1, "+");
+
+    // sides
+    for (i = 1; i < (y - 1); i++)
+    {
+        mvwprintw(screen, i, 0, "|");
+        mvwprintw(screen, i, x - 1, "|");
+    }
+
+    // top and bottom
+    for (i = 1; i < (x - 1); i++)
+    {
+        mvwprintw(screen, 0, i, "-");
+        mvwprintw(screen, y - 1, i, "-");
+    }
+}
+
+void DrawTitle(WINDOW *screen, char *title)
+{
+    mvwprintw(screen, 0, 2, title);
+}
+
 double GetSpeed(unsigned int *pruData)
 {
     uint32_t events = pruData[0];
@@ -75,7 +114,7 @@ double GetSpeed(unsigned int *pruData)
     double kph = mps * 3.6;
 
     // Print out the value received from the PRU code
-    // printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
+    // //printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
 
     return(kph);
 }
@@ -100,7 +139,7 @@ int curve_fit_quad(uint8_t count, FittingData f_data[], double *aa, double *bb, 
         xi = f_data[i].x;
         yi = f_data[i].y;
 
-        //printf ("%g %g\n", xi, yi);
+        ////printf ("%g %g\n", xi, yi);
 
         gsl_matrix_set (X, i, 0, 1.0);
         gsl_matrix_set (X, i, 1, xi);
@@ -115,17 +154,17 @@ int curve_fit_quad(uint8_t count, FittingData f_data[], double *aa, double *bb, 
                           &chisq, work);
     gsl_multifit_linear_free (work);
 
-    printf ("# best fit: Y = %g + %g X + %g X^2\n",
-            C(0), C(1), C(2));
+    //printf ("# best fit: Y = %g + %g X + %g X^2\n",
+    //        C(0), C(1), C(2));
 
-    printf ("# covariance matrix:\n");
-    printf ("[ %+.5e, %+.5e, %+.5e  \n",
-               COV(0,0), COV(0,1), COV(0,2));
-    printf ("  %+.5e, %+.5e, %+.5e  \n",
-               COV(1,0), COV(1,1), COV(1,2));
-    printf ("  %+.5e, %+.5e, %+.5e ]\n",
-               COV(2,0), COV(2,1), COV(2,2));
-    printf ("# chisq = %g\n", chisq);
+    //printf ("# covariance matrix:\n");
+    //printf ("[ %+.5e, %+.5e, %+.5e  \n",
+    //           COV(0,0), COV(0,1), COV(0,2));
+    //printf ("  %+.5e, %+.5e, %+.5e  \n",
+    //           COV(1,0), COV(1,1), COV(1,2));
+    //printf ("  %+.5e, %+.5e, %+.5e ]\n",
+    //           COV(2,0), COV(2,1), COV(2,2));
+    //printf ("# chisq = %g\n", chisq);
 
     *aa = C(0);
     *bb = C(1);
@@ -159,7 +198,7 @@ int curve_fit_cubic(uint8_t count, FittingData f_data[], double *aa, double *bb,
         xi = f_data[i].x;
         yi = f_data[i].y;
 
-        //printf ("%g %g\n", xi, yi);
+        ////printf ("%g %g\n", xi, yi);
 
         gsl_matrix_set (X, i, 0, 1.0);
         gsl_matrix_set (X, i, 1, xi);
@@ -175,19 +214,19 @@ int curve_fit_cubic(uint8_t count, FittingData f_data[], double *aa, double *bb,
                           &chisq, work);
     gsl_multifit_linear_free (work);
 
-    printf ("# best fit: Y = %g + %g X + %g X^2 + %g X^3\n",
-            C(0), C(1), C(2), C(3));
+    //printf ("# best fit: Y = %g + %g X + %g X^2 + %g X^3\n",
+    //        C(0), C(1), C(2), C(3));
 
-    printf ("# covariance matrix:\n");
-    printf ("[ %+.5e, %+.5e, %+.5e, %+.5e  \n",
-               COV(0,0), COV(0,1), COV(0,2), COV(0,3));
-    printf ("  %+.5e, %+.5e, %+.5e, %+.5e  \n",
-               COV(1,0), COV(1,1), COV(1,2), COV(1,3));
-    printf ("  %+.5e, %+.5e, %+.5e, %+.5e ]\n",
-               COV(2,0), COV(2,1), COV(2,2), COV(2,3));
-    printf ("  %+.5e, %+.5e, %+.5e, %+.5e ]\n",
-               COV(3,0), COV(3,1), COV(3,2), COV(3,3));
-    printf ("# chisq = %g\n", chisq);
+    //printf ("# covariance matrix:\n");
+    //printf ("[ %+.5e, %+.5e, %+.5e, %+.5e  \n",
+    //           COV(0,0), COV(0,1), COV(0,2), COV(0,3));
+    //printf ("  %+.5e, %+.5e, %+.5e, %+.5e  \n",
+    //           COV(1,0), COV(1,1), COV(1,2), COV(1,3));
+    //printf ("  %+.5e, %+.5e, %+.5e, %+.5e ]\n",
+    //           COV(2,0), COV(2,1), COV(2,2), COV(2,3));
+    //printf ("  %+.5e, %+.5e, %+.5e, %+.5e ]\n",
+    //           COV(3,0), COV(3,1), COV(3,2), COV(3,3));
+    //printf ("# chisq = %g\n", chisq);
 
     *aa = C(0);
     *bb = C(1);
@@ -248,12 +287,12 @@ void ANTTransferMessage()
     rc = libusb_bulk_transfer(devh, ENDPOINT_OUT, tx_data, tx_len, &tx_bytes, WRITE_TIMEOUT);
     if (rc < 0)
     {
-        printf("libusb: error %i transferring data OUT\n", rc);
+        //printf("libusb: error %i transferring data OUT\n", rc);
     }
     else
     {
-        //printf("libusb: transferred %i bytes OUT\n", tx_bytes);
-        //printf("OUT: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
+        ////printf("libusb: transferred %i bytes OUT\n", tx_bytes);
+        ////printf("OUT: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
         //             tx_data[0], tx_data[1], tx_data[2], tx_data[3],
         //             tx_data[4], tx_data[5], tx_data[6], tx_data[7],
         //             tx_data[8], tx_data[9], tx_data[10], tx_data[11],
@@ -265,12 +304,12 @@ void ANTTransferMessage()
     rc = libusb_bulk_transfer(devh, ENDPOINT_IN, rx_data, rx_len, &rx_bytes, READ_TIMEOUT);
     if (rc < 0)
     {
-        printf("libusb: error %i transferring data IN\n", rc);
+        //printf("libusb: error %i transferring data IN\n", rc);
     }
     else
     {
-        //printf("libusb: transferred %i bytes IN\n", rx_bytes);
-        //printf("IN:  0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
+        ////printf("libusb: transferred %i bytes IN\n", rx_bytes);
+        ////printf("IN:  0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
         //             rx_data[0], rx_data[1], rx_data[2], rx_data[3],
         //             rx_data[4], rx_data[5], rx_data[6], rx_data[7],
         //             rx_data[8], rx_data[9], rx_data[10], rx_data[11],
@@ -294,7 +333,7 @@ void milliSleep(unsigned int interval)
     rc = nanosleep(&sleepValue, &returnTime);
     if (rc == -1)
     {
-        perror ("nanosleep");
+        //perror ("nanosleep");
         return;
     }
 
@@ -345,7 +384,7 @@ static void TimerWait(struct TimerInfo *info)
     rc = read (info->timer_fd, &missed, sizeof (missed));
     if (rc == -1)
     {
-        perror ("read timer");
+        //perror ("read timer");
         return;
     }
 
@@ -360,14 +399,16 @@ static void *Speed_Thread(void *arg)
 {
     struct TimerInfo info;
 
+    return NULL;
+
     // Initialise the PRU
-    printf("Initialising PRU\n");
+    //printf("Initialising PRU\n");
     prussdrv_init ();
 
     // Open an event
     if (prussdrv_open(PRU_EVTOUT_0))
     {
-        printf("prussdrv_open open failed\n");
+        //printf("prussdrv_open open failed\n");
         return NULL;
     }
 
@@ -378,7 +419,7 @@ static void *Speed_Thread(void *arg)
 
     // Execute code on PRU
     // todo: check return code
-    printf("Executing speed pru code\n");
+    //printf("Executing speed pru code\n");
     prussdrv_exec_program (0, "../pru/BeagleTrainer.bin");
 
     // Start the periodic timer @ 100ms
@@ -391,7 +432,7 @@ static void *Speed_Thread(void *arg)
         TimerWait (&info);
 
         // Broadcast data
-        //printf("Speed Thread: timer expired...\n");
+        ////printf("Speed Thread: timer expired...\n");
         uint32_t events = pruData[0];
         uint32_t frequency = events * PRU_UPDATE_FREQ;
 
@@ -403,11 +444,11 @@ static void *Speed_Thread(void *arg)
         currentSpeed = kph;
 
         // Print out the value received from the PRU code
-        //printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
+        ////printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
 }
 
     // cleanup
-    printf("Speed Thread: cleanup\n");
+    //printf("Speed Thread: cleanup\n");
     prussdrv_pru_disable (0);
     prussdrv_exit ();
 
@@ -425,7 +466,7 @@ static void *ANT_Thread(void *arg)
     // USB setup
     if (libusb_init(NULL) != 0)
     {
-        printf("libusb: failed to initialise\n");
+        //printf("libusb: failed to initialise\n");
         return NULL;
     }
 
@@ -433,7 +474,7 @@ static void *ANT_Thread(void *arg)
 
     if (devh == NULL)
     {
-        printf("libusb: failed to open device 0x%04x:0x%04x\n", vendor_id, product_id);
+        //printf("libusb: failed to open device 0x%04x:0x%04x\n", vendor_id, product_id);
     }
     else
     {
@@ -442,11 +483,11 @@ static void *ANT_Thread(void *arg)
 
         if (libusb_claim_interface(devh, 0) != 0)
         {
-            printf("libusb: failed to claim interface");
+            //printf("libusb: failed to claim interface");
         }
         else
         {
-            printf("libusb: succesfully claimed interface\n");
+            //printf("libusb: succesfully claimed interface\n");
 
 
             // ANT+ setup
@@ -497,7 +538,7 @@ static void *ANT_Thread(void *arg)
                 TimerWait (&info);
 
                 // Broadcast data
-                //printf("ANT_Thread: timer expired...\n");
+                ////printf("ANT_Thread: timer expired...\n");
 
                 // Data Page 0x10 message format
                 // Byte 0 : Data Page Number - 0x10
@@ -521,6 +562,8 @@ static void *ANT_Thread(void *arg)
                                 (power_curve_c*speed*speed) +
                                 (power_curve_d*speed*speed*speed));
 
+                currentPower = power_instant;
+
                 power_accumulated += power_instant;
 
                 ANTBuildMessage(9, ANT_BROADCAST_DATA, ANT_CHANNEL_1, ANT_STANDARD_POWER, power_event_count, 0xFF, 0xFF,
@@ -530,7 +573,7 @@ static void *ANT_Thread(void *arg)
             }
 
             // ANT+ cleanup
-            printf("ANT_Thread: cleanup\n");
+            //printf("ANT_Thread: cleanup\n");
 
             // close channel
             ANTBuildMessage(1, ANT_CLOSE_CHANNEL, ANT_CHANNEL_1, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -568,9 +611,9 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
 
     //for (int i = 0; i < s_index; i++)
     //{
-    //    printf("%u, %.2f\n", s_data[i].time, s_data[i].speed);
+    //    //printf("%u, %.2f\n", s_data[i].time, s_data[i].speed);
     //}
-    //printf("\n");
+    ////printf("\n");
 
     // zero out the array of fitting data and re-populate
     memset(f_data, 0, sizeof (f_data));
@@ -584,20 +627,20 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
     // fit the sampled speed vs time data to a quadratic equation (to clean up the data)
     if (curve_fit_quad(count, f_data, &a, &b, &c))
     {
-        printf("fitting failed..\n\n");
+        //printf("fitting failed..\n\n");
     }
     else
     {
-        printf("first fitting succeeded..\n");
-        printf("fn(x) = a + bx + cx^2\n");
-        printf(" a = %lf, b = %lf, c = %lf\n\n", a, b, c);
+        //printf("first fitting succeeded..\n");
+        //printf("fn(x) = a + bx + cx^2\n");
+        //printf(" a = %lf, b = %lf, c = %lf\n\n", a, b, c);
     }
 
     // store & print out the results
     for (int i = 0; i < s_index; i++)
     {
         s_data[i].speed_fitted = a + (b * s_data[i].time) + (c * s_data[i].time * s_data[i].time);
-        //printf("time = %.2f, original speed = %.2f, fitted speed == %.2f\n", s_data[i].time, s_data[i].speed, s_data[i].speed_fitted);
+        ////printf("time = %.2f, original speed = %.2f, fitted speed == %.2f\n", s_data[i].time, s_data[i].speed, s_data[i].speed_fitted);
     }
 
     // calculate the stored kinetic energy at each speed point
@@ -618,7 +661,7 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
         double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
 
         s_data[i].ke = total_kinetic_energy;
-        //printf("kinetic energy @ speed %lf is %lf\n", s_data[i].speed_fitted, s_data[i].ke);
+        ////printf("kinetic energy @ speed %lf is %lf\n", s_data[i].speed_fitted, s_data[i].ke);
     }
 
     // zero out the array of fitting data and re-populate
@@ -633,27 +676,27 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
     // fit kinetic energy vs time to a cubic equation
     if (curve_fit_cubic(count, f_data, &a, &b, &c, &d))
     {
-        printf("fitting failed..\n\n");
+        //printf("fitting failed..\n\n");
     }
     else
     {
-        printf("second fitting succeeded..\n");
-        printf("fn(x) = a + bx + cx^2 + dx^3\n");
-        printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
+        //printf("second fitting succeeded..\n");
+        //printf("fn(x) = a + bx + cx^2 + dx^3\n");
+        //printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
     }
 
     // store & print out the results
     for (int i = 0; i < s_index; i++)
     {
         s_data[i].ke_fitted = a + (b * s_data[i].time) + (c * s_data[i].time * s_data[i].time) + (d * s_data[i].time * s_data[i].time * s_data[i].time);
-        //printf("time = %.2f, original ke = %.2f, fitted ke == %.2f\n", s_data[i].time, s_data[i].ke, s_data[i].ke_fitted);
+        ////printf("time = %.2f, original ke = %.2f, fitted ke == %.2f\n", s_data[i].time, s_data[i].ke, s_data[i].ke_fitted);
     }
 
     // differentiate to get rate of change of KE at a given time
     for (int i = 0; i < s_index; i++)
     {
         s_data[i].ke_rate_of_change = b + (2 * c * s_data[i].time) + (3 * d * s_data[i].time * s_data[i].time);
-        //printf("time = %.2f, ke rate of change == %.2f\n", s_data[i].time, s_data[i].ke_rate_of_change);
+        ////printf("time = %.2f, ke rate of change == %.2f\n", s_data[i].time, s_data[i].ke_rate_of_change);
     }
 
     // zero out the array of fitting data and re-populate
@@ -663,24 +706,24 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
     {
         f_data[i].x = s_data[i].speed_fitted;
         f_data[i].y = fabs(s_data[i].ke_rate_of_change);
-        //printf("fitted speed = %lf, fitted load = %lf\n", f_data[i].x, f_data[i].y);
+        ////printf("fitted speed = %lf, fitted load = %lf\n", f_data[i].x, f_data[i].y);
     }
 
     // fit rate of change vs speed to a cubic equation
     if (curve_fit_cubic(count, f_data, &a, &b, &c, &d))
     {
-        printf("fitting failed..\n\n");
+        //printf("fitting failed..\n\n");
     }
     else
     {
-        printf("third fitting succeeded..\n");
-        printf("fn(x) = a + bx + cx^2 + dx^3\n");
-        printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
+        //printf("third fitting succeeded..\n");
+        //printf("fn(x) = a + bx + cx^2 + dx^3\n");
+        //printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
     }
 
     for (int i = 0; i < 70; i++)
     {
-        //printf("speed = %i, fitted load = %lf\n", i, a + (b*i) + (c*i*i) + (d*i*i*i));
+        ////printf("speed = %i, fitted load = %lf\n", i, a + (b*i) + (c*i*i) + (d*i*i*i));
     }
 
 
@@ -720,8 +763,8 @@ static void *Spindown_Thread(void *arg)
         switch (s_state)
         {
             case IDLE:
-                printf("%.2f : ", kph);
-                printf("Starting spindown calibration process...\n");
+                //printf("%.2f : ", kph);
+                //printf("Starting spindown calibration process...\n");
 
                 // zero out the array of spindown entries & set index to start
                 memset(s_data, 0, sizeof (s_data));
@@ -737,16 +780,16 @@ static void *Spindown_Thread(void *arg)
                 }
                 else
                 {
-                    printf("%.2f : ", kph);
-                    printf("Please increase speed to over 50 km/h...\n");
+                    //printf("%.2f : ", kph);
+                    //printf("Please increase speed to over 50 km/h...\n");
                 }
                 break;
 
             case READY:
                 if (kph > 50)
                 {
-                    printf("%.2f : ", kph);
-                    printf("Please stop pedaling to initiate calibration...\n");
+                    //printf("%.2f : ", kph);
+                    //printf("Please stop pedaling to initiate calibration...\n");
                 }
                 else
                 {
@@ -755,8 +798,8 @@ static void *Spindown_Thread(void *arg)
                 break;
 
             case RUNNING:
-                printf("%.2f : ", kph);
-                printf("Calibrating, please wait....\n");
+                //printf("%.2f : ", kph);
+                //printf("Calibrating, please wait....\n");
 
                 // get current speed & add to array
                 s_data[s_index].time = s_index+1;
@@ -783,22 +826,22 @@ static void *Spindown_Thread(void *arg)
                 s_index++;
                 break;
 
-            case ERR:
-                printf("%.2f : ", kph);
-                printf("Error, did you start pedaling? ;)...\n\n");
+            case ERROR:
+                //printf("%.2f : ", kph);
+                //printf("Error, did you start pedaling? ;)...\n\n");
                 s_state = IDLE;
                 break;
 
-            case OK:
-                printf("%.2f : ", kph);
-                printf("Spindown calibration process successful...\n\n");
+            case DONE:
+                //printf("%.2f : ", kph);
+                //printf("Spindown calibration process successful...\n\n");
 
-                int i;
-                for (i = 0; i < s_index; i++)
+                //int i;
+                for (int i = 0; i < s_index; i++)
                 {
-                    printf("%.0f, %.2f\n", s_data[i].time, s_data[i].speed);
+                    //printf("%.0f, %.2f\n", s_data[i].time, s_data[i].speed);
                 }
-                printf("\n");
+                //printf("\n");
 
                 // ...and finish
                 doSpinDown = 0;
@@ -816,23 +859,155 @@ static void *Spindown_Thread(void *arg)
 
         if (currentMode != MODE_CALIBRATE)
         {
-            printf("Spindown aborted..\n");
+            //printf("Spindown aborted..\n");
         }
     }
     return NULL;
 }
 
+static void *Display_Thread(void *arg)
+{
+    pthread_t spindown_thread;
+    int parent_x, parent_y, new_x, new_y;
+    int power_speed_height = 5;
+
+    char DisplayLine[DISPLAY_MAX_MSG_SIZE];
+    char DisplayBuffer[DISPLAY_MAX_MSG_LINES][DISPLAY_MAX_MSG_SIZE];
+
+    // zero out the display buffer;
+    memset(DisplayBuffer, 0, sizeof(DisplayBuffer));
+
+    // Setup ncurses display
+    initscr();
+    noecho();
+    nodelay(stdscr, TRUE);
+    cbreak();
+    curs_set(FALSE);
+
+    // set up initial windows
+    getmaxyx(stdscr, parent_y, parent_x);
+
+    WINDOW *pwr_window = newwin(power_speed_height, parent_x/2, 0, 0);
+    WINDOW *spd_window = newwin(power_speed_height, parent_x/2, 0, parent_x - parent_x/2);
+    WINDOW *msg_window = newwin(parent_y - power_speed_height, parent_x, power_speed_height, 0);
+
+    DrawBorders(pwr_window);
+    DrawBorders(spd_window);
+    DrawBorders(msg_window);
+
+    // refresh each window
+    wrefresh(pwr_window);
+    wrefresh(spd_window);
+    wrefresh(msg_window);
+
+    while (runDisplayThread)
+    {
+        // use non-blocking ncurses input for control characters
+        char ch = getch();
+
+        // 'm' for manual resistance control
+        if (ch == 'm')
+        {
+            currentMode = MODE_MANUAL;
+        }
+
+        // 'e' for ergo
+        if (ch == 'e')
+        {
+            currentMode = MODE_ERGO;
+        }
+
+        // 's' for slope
+        if (ch == 's')
+        {
+            currentMode = MODE_SLOPE;
+        }
+
+        // 'c' for spindown/calibrate - as 's' was already taken ;)
+        if (ch == 'c')
+        {
+            currentMode = MODE_CALIBRATE;
+            // todo: make sure we don't try and start more than one spindown thread
+            pthread_create (&spindown_thread, NULL, Spindown_Thread, NULL);
+        }
+
+        // handle window resize events
+        getmaxyx(stdscr, new_y, new_x);
+
+        if (new_y != parent_y || new_x != parent_x)
+        {
+            parent_x = new_x;
+            parent_y = new_y;
+
+            wresize(pwr_window, power_speed_height, new_x/2);
+            wresize(spd_window, power_speed_height, parent_x - new_x/2);
+            mvwin(spd_window, 0, new_x/2);
+
+            wresize(msg_window, parent_y - power_speed_height, parent_x);
+            mvwin(msg_window, power_speed_height, 0);
+
+            wclear(stdscr);
+            wclear(spd_window);
+            wclear(pwr_window);
+            wclear(msg_window);
+        }
+
+        // for some reason getch() seems to nuke the borders?
+        // easy fix is just to redraw everything regardless..
+        DrawBorders(pwr_window);
+        DrawBorders(spd_window);
+        DrawBorders(msg_window);
+
+        DrawTitle(spd_window, "Speed");
+        DrawTitle(pwr_window, "Power");
+        DrawTitle(msg_window, "Message Log");
+
+        mvwprintw(spd_window, power_speed_height/2, parent_x/4, "%ld", currentSpeed);
+        mvwprintw(pwr_window, power_speed_height/2, parent_x/4, "%ld", currentPower);
+
+        strcpy(DisplayLine, DisplayMessage);
+
+        if (strcmp(DisplayBuffer[0], DisplayLine))
+        {
+            for (int i = DISPLAY_MAX_MSG_LINES-1; i > 0; i--)
+            {
+                strcpy(DisplayBuffer[i], DisplayBuffer[i-1]);
+            }
+            strcpy(DisplayBuffer[0], DisplayLine);
+
+            for (int i = 0; i < DISPLAY_MAX_MSG_LINES; i++)
+            {
+                mvwprintw(msg_window, i+1, 1, "%s",DisplayBuffer[i]);
+            }
+        }
+
+        // refresh each window
+        wrefresh(pwr_window);
+        wrefresh(spd_window);
+        wrefresh(msg_window);
+
+        milliSleep(100);
+    }
+
+    // clean up ncurses display
+    endwin();
+
+    return NULL;
+}
+
 int main(int argc, char *argv[])
 {
-    pthread_t speed_thread;
-    pthread_t ant_thread;
-    pthread_t spindown_thread;
+    pthread_t display_thread, speed_thread, ant_thread;
 
     // setup signal handler(s)
     signal(SIGINT, on_sigint);
 
     // setup hardware
     SetupHardware();
+
+    // start the display thread
+    runDisplayThread = 1;
+    pthread_create (&display_thread, NULL, Display_Thread, NULL);
 
     // Start the speed sensor thread
     runSpeedThread = 1;
@@ -843,50 +1018,21 @@ int main(int argc, char *argv[])
     runAntThread = 1;
     pthread_create (&ant_thread, NULL, ANT_Thread, NULL);
 
+    milliSleep(500);
+
+    //unsigned int i;
+
     // Run until Ctrl-C
     while (is_sigint == 0)
     {
-        // while testing, just use blocking input for keystrokes to drive the modes
-        // todo: at least use termio to avoid waiting for CR, even needs one after Ctrl-C
-        printf("currentMode = 0x%02x\n", currentMode);
-        printf("main thread sleeping for input..\n");
-        char ch = getchar();
-
-        // 'm' for manual resistance control
-        if (ch == 'm')
-        {
-            currentMode = MODE_MANUAL;
-            ch = getchar(); // swallow the CR
-        }
-
-        // 'e' for ergo
-        if (ch == 'e')
-        {
-            currentMode = MODE_ERGO;
-            ch = getchar(); // swallow the CR
-        }
-
-        // 's' for slope
-        if (ch == 's')
-        {
-            currentMode = MODE_SLOPE;
-            ch = getchar(); // swallow the CR
-        }
-
-        // 'c' for spindown/calibrate - as 's' was already taken ;)
-        if (ch == 'c')
-        {
-            currentMode = MODE_CALIBRATE;
-            ch = getchar(); // swallow the CR
-            // todo: make sure we don't try and start more than one spindown thread
-            pthread_create (&spindown_thread, NULL, Spindown_Thread, NULL);
-        }
+        //sprintf(DisplayMessage, "main thread sleeping... %i", i++);
+        sleep(1);
     }
 
     // wait for threads to finish
     // todo: actually wait..
-    printf("\nWaiting for threads to finsh..\n");
-    runSpeedThread = runAntThread = 0;
+    //printf("\nWaiting for threads to finsh..\n");
+    runDisplayThread = runSpeedThread = runAntThread = 0;
     sleep(1);
 
     // cleanup hardware

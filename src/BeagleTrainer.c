@@ -21,14 +21,15 @@ volatile unsigned int runDisplayThread = 0;
 volatile double currentSpeed;
 volatile double currentPower;
 volatile unsigned int currentMode = MODE_MANUAL;
+volatile unsigned int lastMode = MODE_MANUAL;
 
 volatile double power_curve_a = DEFAULT_CURVE_A;
 volatile double power_curve_b = DEFAULT_CURVE_B;
 volatile double power_curve_c = DEFAULT_CURVE_C;
 volatile double power_curve_d = DEFAULT_CURVE_D;
 
-volatile char DisplayMessage[DISPLAY_MAX_MSG_SIZE];
-volatile char DisplayStatus[DISPLAY_MAX_MSG_SIZE];
+char DisplayMessage[DISPLAY_MAX_MSG_SIZE];
+char DisplayStatus[DISPLAY_MAX_MSG_SIZE];
 
 // rx_data buffer needs to be bigger than a single ANT message to handle multiple messages
 // even though we are not parsing them properly yet (max buffer size of endpoint is 64)
@@ -289,6 +290,7 @@ void ANTTransferMessage()
     if (rc < 0)
     {
         //printf("libusb: error %i transferring data OUT\n", rc);
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: error %i transferring data OUT\n", rc);
     }
     else
     {
@@ -306,6 +308,7 @@ void ANTTransferMessage()
     if (rc < 0)
     {
         //printf("libusb: error %i transferring data IN\n", rc);
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: error %i transferring data IN\n", rc);
     }
     else
     {
@@ -400,7 +403,7 @@ static void *Speed_Thread(void *arg)
 {
     struct TimerInfo info;
 
-    return NULL;
+    //return NULL;
 
     // Initialise the PRU
     //printf("Initialising PRU\n");
@@ -438,7 +441,7 @@ static void *Speed_Thread(void *arg)
         uint32_t frequency = events * PRU_UPDATE_FREQ;
 
         double rps = (double)frequency / PULSE_PER_REV;
-        double rpm = rps * 60.0;
+        //double rpm = rps * 60.0;
         double mps = rps * 2.0 * M_PI * RADIUS / 1000.0;
         double kph = mps * 3.6;
 
@@ -446,6 +449,8 @@ static void *Speed_Thread(void *arg)
 
         // Print out the value received from the PRU code
         ////printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
+        //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "%u events, %.0f RPM, %.2f km/h", events, rpm, kph);
+
 }
 
     // cleanup
@@ -461,13 +466,17 @@ static void *ANT_Thread(void *arg)
     struct TimerInfo info;
 
     uint8_t   power_event_count = 0;
-    uint16_t  power_instant = 0;
     uint16_t  power_accumulated = 0;
+    uint16_t  power_instant = 0;
+
+    double previous_ke = 0;
+
 
     // USB setup
     if (libusb_init(NULL) != 0)
     {
         //printf("libusb: failed to initialise\n");
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: failed to initialise...");
         return NULL;
     }
 
@@ -476,6 +485,7 @@ static void *ANT_Thread(void *arg)
     if (devh == NULL)
     {
         //printf("libusb: failed to open device 0x%04x:0x%04x\n", vendor_id, product_id);
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: failed to open device 0x%04x:0x%04x\n", vendor_id, product_id);
     }
     else
     {
@@ -485,10 +495,13 @@ static void *ANT_Thread(void *arg)
         if (libusb_claim_interface(devh, 0) != 0)
         {
             //printf("libusb: failed to claim interface");
+            snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: failed to claim interface");
+
         }
         else
         {
             //printf("libusb: succesfully claimed interface\n");
+            snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "libusb: succesfully claimed interface");
 
 
             // ANT+ setup
@@ -532,6 +545,10 @@ static void *ANT_Thread(void *arg)
             // todo: use stricter ANT power message interval?
             TimerStart (250000, &info);
 
+            //TESTING!!!
+            // ONCE PER SECOND TO MATCH SPEED UPDATES
+            //TimerStart (1000000, &info);
+
             // Run until terminated from main thread
             while (runAntThread)
             {
@@ -554,14 +571,40 @@ static void *ANT_Thread(void *arg)
                 // #define POWER   150
                 // power_instant = POWER;
 
-                power_event_count++;
-
                 double speed = currentSpeed;
 
-                power_instant = (power_curve_a +
-                                (power_curve_b*speed) +
-                                (power_curve_c*speed*speed) +
-                                (power_curve_d*speed*speed*speed));
+                // calculate the static power
+                double power_static = (power_curve_a +
+                                      (power_curve_b*speed) +
+                                      (power_curve_c*speed*speed) +
+                                      (power_curve_d*speed*speed*speed));
+
+                // calculate the kinetic energy at this speed
+                // todo: lifted from fitting function - refactor
+                double speed_ms = speed / 3.6;
+
+                double wheel_angular_velocity = (speed_ms * 1000 / WHEEL_CIRCUMFERENCE) * 2 * M_PI;
+                double roller_angular_velocity = (speed_ms * 1000 / ROLLER_CIRCUMFERENCE) * 2 * M_PI;
+
+                double wheel_kinetic_energy = 0.5 * WHEEL_INERTIA * (wheel_angular_velocity * wheel_angular_velocity);
+                double roller_kinetic_energy = 0.5 * ROLLER_INERTIA * (roller_angular_velocity * roller_angular_velocity);
+                double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
+
+                // calculate the acceleration power
+                // todo: assumes 1 second interval
+                double power_accel = total_kinetic_energy - previous_ke;
+
+                //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "current_ke = %lf, previous_ke = %lf", total_kinetic_energy, previous_ke);
+                //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "power_static = %.0lf, power_accel = %.0lf", power_static, power_accel);
+
+                // Print out the value received from the PRU code
+                //printf("%u events, %.0f RPM, %.2f km/h, %.2f watts\r\n", events, rpm, kph, power_static+power_accel);
+
+                previous_ke = total_kinetic_energy;
+
+                power_event_count++;
+
+                power_instant = power_static + power_accel;
 
                 currentPower = power_instant;
 
@@ -720,7 +763,7 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
         //printf("third fitting succeeded..\n");
         //printf("fn(x) = a + bx + cx^2 + dx^3\n");
         //printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
-        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "a = %lf, b = %lf, c = %lf, d = %lf", a, b, c, d);
+        //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "a = %lf, b = %lf, c = %lf, d = %lf", a, b, c, d);
     }
 
     for (int i = 0; i < 70; i++)
@@ -731,9 +774,9 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
 
     // use above parameters to model static power requirements
     power_curve_a = a;
-    power_curve_a = b;
-    power_curve_a = c;
-    power_curve_a = d;
+    power_curve_b = b;
+    power_curve_c = c;
+    power_curve_d = d;
 
 
     return;
@@ -816,7 +859,7 @@ static void *Spindown_Thread(void *arg)
                 {
                     if (s_data[s_index].speed > s_data[s_index-1].speed)
                     {
-                        s_state = ERR;
+                        s_state = ERROR;
                         break;
                     }
                 }
@@ -824,7 +867,7 @@ static void *Spindown_Thread(void *arg)
                 // have we reached enough samples, or low enough speed
                 if ((s_data[s_index].speed < 10) || (s_index == MAX_SPINDOWN_SAMPLES))
                 {
-                    s_state = OK;
+                    s_state = DONE;
                     break;
                 }
 
@@ -842,7 +885,10 @@ static void *Spindown_Thread(void *arg)
             case DONE:
                 //printf("%.2f : ", kph);
                 //printf("Spindown calibration process successful...\n\n");
-                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Spindown calibration process successful...");
+                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE,
+                        "Spindown successful: a = %lf, b = %lf, c = %lf, d = %lf",
+                        power_curve_a, power_curve_b,
+                        power_curve_c, power_curve_d);
 
                 //int i;
                 for (int i = 0; i < s_index; i++)
@@ -859,7 +905,7 @@ static void *Spindown_Thread(void *arg)
                 break;
         }
 
-        if (s_state == OK)
+        if (s_state == DONE)
         {
             // Spindown completed, now fit data to curve
             FitCurve(s_data, s_index);
@@ -871,6 +917,8 @@ static void *Spindown_Thread(void *arg)
             snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Spindown aborted...");
         }
     }
+
+    currentMode = lastMode;
     return NULL;
 }
 
@@ -904,10 +952,10 @@ static void *Display_Thread(void *arg)
     WINDOW *msg_window = newwin(parent_y - power_speed_height - status_height, parent_x, power_speed_height, 0);
     WINDOW *sta_window = newwin(status_height, parent_x, parent_y - status_height, 0);
 
-    DrawBorders(pwr_window);
-    DrawBorders(spd_window);
-    DrawBorders(msg_window);
-    DrawBorders(sta_window);
+    box(pwr_window, 0, 0);
+    box(spd_window, 0, 0);
+    box(msg_window, 0, 0);
+    box(sta_window, 0, 0);
 
     // refresh each window
     wrefresh(pwr_window);
@@ -941,6 +989,7 @@ static void *Display_Thread(void *arg)
         // 'c' for spindown/calibrate - as 's' was already taken ;)
         if (ch == 'c')
         {
+            lastMode = currentMode;
             currentMode = MODE_CALIBRATE;
             // todo: make sure we don't try and start more than one spindown thread
             pthread_create (&spindown_thread, NULL, Spindown_Thread, NULL);
@@ -966,20 +1015,20 @@ static void *Display_Thread(void *arg)
 
             // clear the windows if resized
             wclear(stdscr);
-            wclear(spd_window);
-            wclear(pwr_window);
             wclear(msg_window);
         }
 
         // clear the status window regardless
         wclear(sta_window);
+        wclear(spd_window);
+        wclear(pwr_window);
 
         // for some reason getch() seems to nuke the borders?
         // easy fix is just to redraw everything regardless..
-        DrawBorders(pwr_window);
-        DrawBorders(spd_window);
-        DrawBorders(msg_window);
-        DrawBorders(sta_window);
+        box(pwr_window, 0, 0);
+        box(spd_window, 0, 0);
+        box(msg_window, 0, 0);
+        box(sta_window, 0, 0);
 
         DrawTitle(spd_window, "Speed");
         DrawTitle(pwr_window, "Power");

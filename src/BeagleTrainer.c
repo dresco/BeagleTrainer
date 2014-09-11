@@ -870,6 +870,7 @@ static void *Display_Thread(void *arg)
     pthread_t spindown_thread;
     int parent_x, parent_y, new_x, new_y;
     int power_speed_height = 5;
+    int status_height = 3;
 
     char DisplayLine[DISPLAY_MAX_MSG_SIZE];
     char DisplayBuffer[DISPLAY_MAX_MSG_LINES][DISPLAY_MAX_MSG_SIZE];
@@ -889,16 +890,19 @@ static void *Display_Thread(void *arg)
 
     WINDOW *pwr_window = newwin(power_speed_height, parent_x/2, 0, 0);
     WINDOW *spd_window = newwin(power_speed_height, parent_x/2, 0, parent_x - parent_x/2);
-    WINDOW *msg_window = newwin(parent_y - power_speed_height, parent_x, power_speed_height, 0);
+    WINDOW *msg_window = newwin(parent_y - power_speed_height - status_height, parent_x, power_speed_height, 0);
+    WINDOW *sta_window = newwin(status_height, parent_x, parent_y - status_height, 0);
 
     DrawBorders(pwr_window);
     DrawBorders(spd_window);
     DrawBorders(msg_window);
+    DrawBorders(sta_window);
 
     // refresh each window
     wrefresh(pwr_window);
     wrefresh(spd_window);
     wrefresh(msg_window);
+    wrefresh(sta_window);
 
     while (runDisplayThread)
     {
@@ -943,13 +947,17 @@ static void *Display_Thread(void *arg)
             wresize(spd_window, power_speed_height, parent_x - new_x/2);
             mvwin(spd_window, 0, new_x/2);
 
-            wresize(msg_window, parent_y - power_speed_height, parent_x);
+            wresize(msg_window, parent_y - power_speed_height - status_height, parent_x);
             mvwin(msg_window, power_speed_height, 0);
+
+            wresize(sta_window, status_height, parent_x);
+            mvwin(sta_window, parent_y - status_height, 0);
 
             wclear(stdscr);
             wclear(spd_window);
             wclear(pwr_window);
             wclear(msg_window);
+            wclear(sta_window);
         }
 
         // for some reason getch() seems to nuke the borders?
@@ -957,10 +965,12 @@ static void *Display_Thread(void *arg)
         DrawBorders(pwr_window);
         DrawBorders(spd_window);
         DrawBorders(msg_window);
+        DrawBorders(sta_window);
 
         DrawTitle(spd_window, "Speed");
         DrawTitle(pwr_window, "Power");
-        DrawTitle(msg_window, "Message Log");
+        DrawTitle(msg_window, "Messages");
+        DrawTitle(sta_window, "Status");
 
         mvwprintw(spd_window, power_speed_height/2, parent_x/4, "%ld", currentSpeed);
         mvwprintw(pwr_window, power_speed_height/2, parent_x/4, "%ld", currentPower);
@@ -985,6 +995,7 @@ static void *Display_Thread(void *arg)
         wrefresh(pwr_window);
         wrefresh(spd_window);
         wrefresh(msg_window);
+        wrefresh(sta_window);
 
         milliSleep(100);
     }

@@ -28,6 +28,7 @@ volatile double power_curve_c = DEFAULT_CURVE_C;
 volatile double power_curve_d = DEFAULT_CURVE_D;
 
 volatile char DisplayMessage[DISPLAY_MAX_MSG_SIZE];
+volatile char DisplayStatus[DISPLAY_MAX_MSG_SIZE];
 
 // rx_data buffer needs to be bigger than a single ANT message to handle multiple messages
 // even though we are not parsing them properly yet (max buffer size of endpoint is 64)
@@ -719,6 +720,7 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
         //printf("third fitting succeeded..\n");
         //printf("fn(x) = a + bx + cx^2 + dx^3\n");
         //printf(" a = %lf, b = %lf, c = %lf, d = %lf\n\n", a, b, c, d);
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "a = %lf, b = %lf, c = %lf, d = %lf", a, b, c, d);
     }
 
     for (int i = 0; i < 70; i++)
@@ -765,6 +767,7 @@ static void *Spindown_Thread(void *arg)
             case IDLE:
                 //printf("%.2f : ", kph);
                 //printf("Starting spindown calibration process...\n");
+                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Starting spindown calibration process...");
 
                 // zero out the array of spindown entries & set index to start
                 memset(s_data, 0, sizeof (s_data));
@@ -782,6 +785,7 @@ static void *Spindown_Thread(void *arg)
                 {
                     //printf("%.2f : ", kph);
                     //printf("Please increase speed to over 50 km/h...\n");
+                    snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Please increase speed to over 50 km/h...");
                 }
                 break;
 
@@ -790,6 +794,7 @@ static void *Spindown_Thread(void *arg)
                 {
                     //printf("%.2f : ", kph);
                     //printf("Please stop pedaling to initiate calibration...\n");
+                    snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Please stop pedaling to initiate calibration...");
                 }
                 else
                 {
@@ -800,6 +805,7 @@ static void *Spindown_Thread(void *arg)
             case RUNNING:
                 //printf("%.2f : ", kph);
                 //printf("Calibrating, please wait....\n");
+                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Calibrating, please wait....");
 
                 // get current speed & add to array
                 s_data[s_index].time = s_index+1;
@@ -829,12 +835,14 @@ static void *Spindown_Thread(void *arg)
             case ERROR:
                 //printf("%.2f : ", kph);
                 //printf("Error, did you start pedaling? ;)...\n\n");
+                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Error, did you start pedaling? ;)...");
                 s_state = IDLE;
                 break;
 
             case DONE:
                 //printf("%.2f : ", kph);
                 //printf("Spindown calibration process successful...\n\n");
+                snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Spindown calibration process successful...");
 
                 //int i;
                 for (int i = 0; i < s_index; i++)
@@ -860,6 +868,7 @@ static void *Spindown_Thread(void *arg)
         if (currentMode != MODE_CALIBRATE)
         {
             //printf("Spindown aborted..\n");
+            snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "Spindown aborted...");
         }
     }
     return NULL;
@@ -874,6 +883,8 @@ static void *Display_Thread(void *arg)
 
     char DisplayLine[DISPLAY_MAX_MSG_SIZE];
     char DisplayBuffer[DISPLAY_MAX_MSG_LINES][DISPLAY_MAX_MSG_SIZE];
+
+    char StatusLine[DISPLAY_MAX_MSG_SIZE];
 
     // zero out the display buffer;
     memset(DisplayBuffer, 0, sizeof(DisplayBuffer));
@@ -953,12 +964,15 @@ static void *Display_Thread(void *arg)
             wresize(sta_window, status_height, parent_x);
             mvwin(sta_window, parent_y - status_height, 0);
 
+            // clear the windows if resized
             wclear(stdscr);
             wclear(spd_window);
             wclear(pwr_window);
             wclear(msg_window);
-            wclear(sta_window);
         }
+
+        // clear the status window regardless
+        wclear(sta_window);
 
         // for some reason getch() seems to nuke the borders?
         // easy fix is just to redraw everything regardless..
@@ -972,13 +986,19 @@ static void *Display_Thread(void *arg)
         DrawTitle(msg_window, "Messages");
         DrawTitle(sta_window, "Status");
 
-        mvwprintw(spd_window, power_speed_height/2, parent_x/4, "%ld", currentSpeed);
-        mvwprintw(pwr_window, power_speed_height/2, parent_x/4, "%ld", currentPower);
+        mvwprintw(pwr_window, power_speed_height/2, parent_x/4, "%.0lf", currentPower);
+        mvwprintw(spd_window, power_speed_height/2, parent_x/4, "%.1lf", currentSpeed);
 
         strcpy(DisplayLine, DisplayMessage);
 
         if (strcmp(DisplayBuffer[0], DisplayLine))
         {
+            // clear the previous message window content if we have new messages,
+            // so we're not left with artifacts from previous (longer) lines..
+            wclear(msg_window);
+            DrawBorders(msg_window);
+            DrawTitle(msg_window, "Messages");
+
             for (int i = DISPLAY_MAX_MSG_LINES-1; i > 0; i--)
             {
                 strcpy(DisplayBuffer[i], DisplayBuffer[i-1]);
@@ -990,6 +1010,29 @@ static void *Display_Thread(void *arg)
                 mvwprintw(msg_window, i+1, 1, "%s",DisplayBuffer[i]);
             }
         }
+
+        switch (currentMode)
+        {
+            case MODE_MANUAL:
+                sprintf(StatusLine, "MANUAL MODE");
+                break;
+
+            case MODE_SLOPE:
+                sprintf(StatusLine, "SLOPE MODE");
+                break;
+
+            case MODE_ERGO:
+                sprintf(StatusLine, "ERGO MODE");
+                break;
+
+            case MODE_CALIBRATE:
+                sprintf(StatusLine, "SPINDOWN MODE");
+                break;
+
+        }
+
+        //strcpy(StatusLine, DisplayStatus);
+        mvwprintw(sta_window, 1, 1, "%s",StatusLine);
 
         // refresh each window
         wrefresh(pwr_window);

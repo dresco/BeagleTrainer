@@ -1135,10 +1135,11 @@ int main(int argc, char *argv[])
     }
 
     // wait for threads to finish
-    // todo: actually wait..
     //printf("\nWaiting for threads to finsh..\n");
     runDisplayThread = runSpeedThread = runAntThread = 0;
-    sleep(1);
+    pthread_join(display_thread, NULL);
+    pthread_join(speed_thread, NULL);
+    pthread_join(ant_thread, NULL);
 
     // cleanup hardware
     CleanupHardware();

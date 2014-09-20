@@ -10,15 +10,15 @@
 #define DEFAULT_CURVE_C 0.0437150594453467
 #define DEFAULT_CURVE_D -0.000261637287368499
 
-// 4 magnets in current configuration
-#define PULSE_PER_REV 4.0
+// 16 high/low transitions on 32 segment encoder disk
+#define PULSE_PER_REV 16.0
 
 // Radius of roller in mm
 #define RADIUS 24.95
 
 // How many times per second does the PRU write an event count
 // (need to multiply the count value by this to get events/sec)
-#define PRU_UPDATE_FREQ 1
+#define PRU_UPDATE_FREQ 4
 
 #define MAX_SPINDOWN_SAMPLES 50
 

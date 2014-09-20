@@ -590,9 +590,11 @@ static void *ANT_Thread(void *arg)
                 double roller_kinetic_energy = 0.5 * ROLLER_INERTIA * (roller_angular_velocity * roller_angular_velocity);
                 double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
 
-                // calculate the acceleration power
-                // todo: assumes 1 second interval
-                double power_accel = total_kinetic_energy - previous_ke;
+                // calculate the acceleration power. This calculation is dependent on the update
+                // frequency, as we are looking for the change in stored kinetic energy per second
+                //
+                // todo: this may need some smoothing as the frequency increases?
+                double power_accel = (total_kinetic_energy - previous_ke) * PRU_UPDATE_FREQ;
 
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "current_ke = %lf, previous_ke = %lf", total_kinetic_energy, previous_ke);
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "power_static = %.0lf, power_accel = %.0lf", power_static, power_accel);

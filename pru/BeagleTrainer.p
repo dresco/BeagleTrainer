@@ -100,8 +100,8 @@ START:
     ZERO &r3, 24
     
     // set number of iterations between each data ram update
-    // 10,000 samples = 1 second
-    MOV r8, 10000
+    // 2,500 samples = 0.25 seconds
+    MOV r8, 2500
 
     // Store number of events in the PRU's data ram (zero at this point)
     SBCO r6, CONST_PRUDRAM, 0, 4
@@ -121,9 +121,9 @@ CHECK_COUNT:
     
     //
     // FIXME: If using an interval of less than 1 second, we
-    //        could use the MPY/MAC module to mutiply count by
+    //        could use the MPY/MAC module to multiply count by
     //        the number of samples per second?? Or maybe we 
-    //        should just pass an ever incrementng time and 
+    //        should just pass an ever incrementing time and 
     //        count to the host and let it handle things at 
     //        that end......????
     //

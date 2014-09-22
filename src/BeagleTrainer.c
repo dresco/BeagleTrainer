@@ -20,6 +20,7 @@ volatile unsigned int runAntThread = 0;
 volatile unsigned int runDisplayThread = 0;
 volatile double currentSpeed;
 volatile double currentPower;
+volatile uint32_t currentFrequency;
 volatile unsigned int currentMode = MODE_MANUAL;
 volatile unsigned int lastMode = MODE_MANUAL;
 
@@ -446,6 +447,7 @@ static void *Speed_Thread(void *arg)
         double kph = mps * 3.6;
 
         currentSpeed = kph;
+        currentFrequency = events;
 
         // Print out the value received from the PRU code
         ////printf("%u events, %.0f RPM, %.2f km/h\r\n", events, rpm, kph);
@@ -1065,19 +1067,19 @@ static void *Display_Thread(void *arg)
         switch (currentMode)
         {
             case MODE_MANUAL:
-                sprintf(StatusLine, "MANUAL MODE");
+                sprintf(StatusLine, "Freq: %04u - MANUAL MODE", currentFrequency);
                 break;
 
             case MODE_SLOPE:
-                sprintf(StatusLine, "SLOPE MODE");
+                sprintf(StatusLine, "Freq: %04u - SLOPE MODE", currentFrequency);
                 break;
 
             case MODE_ERGO:
-                sprintf(StatusLine, "ERGO MODE");
+                sprintf(StatusLine, "Freq: %04u - ERGO MODE", currentFrequency);
                 break;
 
             case MODE_CALIBRATE:
-                sprintf(StatusLine, "SPINDOWN MODE");
+                sprintf(StatusLine, "Freq: %04u - SPINDOWN MODE", currentFrequency);
                 break;
 
         }

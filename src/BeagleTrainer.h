@@ -11,7 +11,7 @@
 #define DEFAULT_CURVE_D -0.000261637287368499
 
 // 16 high/low transitions on 32 segment encoder disk
-#define PULSE_PER_REV 16.0
+#define PULSE_PER_REV 32.0
 
 // Radius of roller in mm
 #define RADIUS 24.95

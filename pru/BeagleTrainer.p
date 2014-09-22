@@ -3,7 +3,7 @@
 // (pr1_pru0_pru_r31_14) on each overflow.
 // 
 // Increment a counter at each falling edge (if the pin state has transitioned 
-// from high to low).
+// from high to low). Note: now counting on either edge for increased resolution..
 // 
 // After a set number of samples, write the counter to data memory where it
 // can be read by the main ARM processor, then reset counter values to 0.
@@ -163,9 +163,11 @@ SAMPLE:
 
     // pin state has changed, is it low (was falling edge)?
     // if not then, just go wait for next sample
-    QBBS CHECK_COUNT, r3.t0
+    // count on either edge to double the frequency
+    // QBBS CHECK_COUNT, r3.t0
     
     // must be at falling edge, increment event counter
+    // count on either edge to double the frequency
     ADD r6, r6, 1
 
     JMP CHECK_COUNT

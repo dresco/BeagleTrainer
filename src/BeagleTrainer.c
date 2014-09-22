@@ -427,8 +427,8 @@ static void *Speed_Thread(void *arg)
     //printf("Executing speed pru code\n");
     prussdrv_exec_program (0, "../pru/BeagleTrainer.bin");
 
-    // Start the periodic timer @ 100ms
-    TimerStart (100000, &info);
+    // Start the periodic timer @ 125ms
+    TimerStart (125000, &info);
 
     // Run until terminated from main thread
     while (runSpeedThread)

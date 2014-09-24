@@ -73,6 +73,21 @@ struct TimerInfo
     unsigned long long wakeups_missed;
 };
 
+double GetKineticEnergy(double speed_ms)
+{
+    // todo: results varies depending on whether we scale the quotient or divisor.
+    //        is this a rounding error? figure this out in due course...
+
+    double wheel_angular_velocity = (speed_ms * 1000 / WHEEL_CIRCUMFERENCE) * 2 * M_PI;
+    double roller_angular_velocity = (speed_ms * 1000 / ROLLER_CIRCUMFERENCE) * 2 * M_PI;
+
+    double wheel_kinetic_energy = 0.5 * WHEEL_INERTIA * (wheel_angular_velocity * wheel_angular_velocity);
+    double roller_kinetic_energy = 0.5 * ROLLER_INERTIA * (roller_angular_velocity * roller_angular_velocity);
+    double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
+
+    return total_kinetic_energy;
+}
+
 void DrawBorders(WINDOW *screen)
 {
     // todo: remove double borders between adjacent windows?
@@ -582,21 +597,14 @@ static void *ANT_Thread(void *arg)
                                       (power_curve_d*speed*speed*speed));
 
                 // calculate the kinetic energy at this speed
-                // todo: lifted from fitting function - refactor
                 double speed_ms = speed / 3.6;
-
-                double wheel_angular_velocity = (speed_ms * 1000 / WHEEL_CIRCUMFERENCE) * 2 * M_PI;
-                double roller_angular_velocity = (speed_ms * 1000 / ROLLER_CIRCUMFERENCE) * 2 * M_PI;
-
-                double wheel_kinetic_energy = 0.5 * WHEEL_INERTIA * (wheel_angular_velocity * wheel_angular_velocity);
-                double roller_kinetic_energy = 0.5 * ROLLER_INERTIA * (roller_angular_velocity * roller_angular_velocity);
-                double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
+                double current_ke = GetKineticEnergy(speed_ms);
 
                 // calculate the acceleration power. This calculation is dependent on the update
                 // frequency, as we are looking for the change in stored kinetic energy per second
                 //
                 // todo: this may need some smoothing as the frequency increases?
-                double power_accel = (total_kinetic_energy - previous_ke) * PRU_UPDATE_FREQ;
+                double power_accel = (current_ke - previous_ke) * PRU_UPDATE_FREQ;
 
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "current_ke = %lf, previous_ke = %lf", total_kinetic_energy, previous_ke);
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "power_static = %.0lf, power_accel = %.0lf", power_static, power_accel);
@@ -604,7 +612,7 @@ static void *ANT_Thread(void *arg)
                 // Print out the value received from the PRU code
                 //printf("%u events, %.0f RPM, %.2f km/h, %.2f watts\r\n", events, rpm, kph, power_static+power_accel);
 
-                previous_ke = total_kinetic_energy;
+                previous_ke = current_ke;
 
                 power_event_count++;
 
@@ -697,18 +705,8 @@ void FitCurve(SpinDownData s_data[], uint8_t s_index)
     for (int i = 0; i < s_index; i++)
     {
         double speed_ms = s_data[i].speed_fitted * 0.27777777777778;
-
-        // todo: results varies depending on whether we scale the quotient or divisor.
-        //        is this a rounding error? figure this out in due course...
-
-        double wheel_angular_velocity = (speed_ms * 1000 / WHEEL_CIRCUMFERENCE) * 2 * M_PI;
-        double roller_angular_velocity = (speed_ms * 1000 / ROLLER_CIRCUMFERENCE) * 2 * M_PI;
-
-        double wheel_kinetic_energy = 0.5 * WHEEL_INERTIA * (wheel_angular_velocity * wheel_angular_velocity);
-        double roller_kinetic_energy = 0.5 * ROLLER_INERTIA * (roller_angular_velocity * roller_angular_velocity);
-        double total_kinetic_energy = wheel_kinetic_energy + roller_kinetic_energy;
-
-        s_data[i].ke = total_kinetic_energy;
+        double ke = GetKineticEnergy(speed_ms);
+        s_data[i].ke = ke;
         ////printf("kinetic energy @ speed %lf is %lf\n", s_data[i].speed_fitted, s_data[i].ke);
     }
 

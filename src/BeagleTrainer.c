@@ -394,12 +394,17 @@ static void *Speed_Thread(void *arg)
 
     // Initialise the PRU
     //printf("Initialising PRU\n");
-    prussdrv_init ();
+    if (prussdrv_init() != 0)
+    {
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "prussdrv_init failed");
+        return NULL;
+    }
 
     // Open an event
     if (prussdrv_open(PRU_EVTOUT_0))
     {
-        //printf("prussdrv_open open failed\n");
+        //printf("prussdrv_open failed\n");
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "prussdrv_open failed");
         return NULL;
     }
 
@@ -409,9 +414,13 @@ static void *Speed_Thread(void *arg)
     unsigned int *pruData = (unsigned int *) pruDataMem;
 
     // Execute code on PRU
-    // todo: check return code
     //printf("Executing speed pru code\n");
-    prussdrv_exec_program (0, "../pru/BeagleTrainer.bin");
+    if (prussdrv_exec_program (0, "../pru/BeagleTrainer.bin") < 0)
+    {
+        //printf("prussdrv_exec_program failed\n");
+        snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "prussdrv_exec_program failed");
+        return NULL;
+    }
 
     // Start the periodic timer @ 125ms
     TimerStart (125000, &info);
@@ -443,8 +452,8 @@ static void *Speed_Thread(void *arg)
 
     // cleanup
     //printf("Speed Thread: cleanup\n");
-    prussdrv_pru_disable (0);
-    prussdrv_exit ();
+    prussdrv_pru_disable(0);
+    prussdrv_exit();
 
     return NULL;
 }

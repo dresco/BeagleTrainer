@@ -88,35 +88,6 @@ double GetKineticEnergy(double speed_ms)
     return total_kinetic_energy;
 }
 
-void DrawBorders(WINDOW *screen)
-{
-    // todo: remove double borders between adjacent windows?
-
-    int x, y, i;
-
-    getmaxyx(screen, y, x);
-
-    // 4 corners
-    mvwprintw(screen, 0, 0, "+");
-    mvwprintw(screen, y - 1, 0, "+");
-    mvwprintw(screen, 0, x - 1, "+");
-    mvwprintw(screen, y - 1, x - 1, "+");
-
-    // sides
-    for (i = 1; i < (y - 1); i++)
-    {
-        mvwprintw(screen, i, 0, "|");
-        mvwprintw(screen, i, x - 1, "|");
-    }
-
-    // top and bottom
-    for (i = 1; i < (x - 1); i++)
-    {
-        mvwprintw(screen, 0, i, "-");
-        mvwprintw(screen, y - 1, i, "-");
-    }
-}
-
 void DrawTitle(WINDOW *screen, char *title)
 {
     mvwprintw(screen, 0, 2, title);
@@ -1047,7 +1018,7 @@ static void *Display_Thread(void *arg)
             // clear the previous message window content if we have new messages,
             // so we're not left with artifacts from previous (longer) lines..
             wclear(msg_window);
-            DrawBorders(msg_window);
+            box(msg_window, 0, 0);
             DrawTitle(msg_window, "Messages");
 
             for (int i = DISPLAY_MAX_MSG_LINES-1; i > 0; i--)

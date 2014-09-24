@@ -13,6 +13,7 @@
 #include <prussdrv.h>
 #include <pruss_intc_mapping.h>
 #include "BeagleTrainer.h"
+#include "ANT.h"
 
 static volatile unsigned int is_sigint = 0;
 volatile unsigned int runSpeedThread = 0;
@@ -35,9 +36,8 @@ char DisplayStatus[DISPLAY_MAX_MSG_SIZE];
 // rx_data buffer needs to be bigger than a single ANT message to handle multiple messages
 // even though we are not parsing them properly yet (max buffer size of endpoint is 64)
 // todo: should we lookup the buffer sizes?
-// todo: remove ant network key before public commit
-const unsigned char key[8] = { 0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45 };
 
+const unsigned char key[8] = ANT_NETWORK_KEY;
 unsigned char tx_data[ANT_MAX_MESSAGE_SIZE+1]; // include sync byte at front
 unsigned char rx_data[ANT_MAX_MESSAGE_SIZE+1+50]; // include sync byte at front
 int tx_len, rx_len;

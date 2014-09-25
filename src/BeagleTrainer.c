@@ -466,8 +466,15 @@ static void *ANT_Thread(void *arg)
     uint16_t  power_accumulated = 0;
     uint16_t  power_instant = 0;
 
-    double previous_ke = 0;
+    double    previous_ke = 0;
 
+    uint8_t   power_accel_index;
+    double    power_accel_array[POWER_SAMPLE_DEPTH];
+    double    power_accel_filtered;
+
+    // zero out the array of power entries & set index to start
+    memset(power_accel_array, 0, sizeof (power_accel_array));
+    power_accel_index = 0;
 
     // USB setup
     if (libusb_init(NULL) != 0)
@@ -583,8 +590,22 @@ static void *ANT_Thread(void *arg)
                 // calculate the acceleration power. This calculation is dependent on the update
                 // frequency, as we are looking for the change in stored kinetic energy per second
                 //
-                // todo: this may need some smoothing as the frequency increases?
                 double power_accel = (current_ke - previous_ke) * PRU_UPDATE_FREQ;
+
+                // todo: this may need some smoothing as the frequency increases?
+                //       - start with a simple moving average of the acceleration power
+                power_accel_array[power_accel_index++] = power_accel;
+                if (power_accel_index >= POWER_SAMPLE_DEPTH)
+                {
+                    power_accel_index = 0;
+                }
+
+                power_accel_filtered = 0;
+                for (int i = 0; i < POWER_SAMPLE_DEPTH; i++)
+                {
+                    power_accel_filtered += power_accel_array[i];
+                }
+                power_accel_filtered /= POWER_SAMPLE_DEPTH;
 
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "current_ke = %lf, previous_ke = %lf", total_kinetic_energy, previous_ke);
                 //snprintf(DisplayMessage, DISPLAY_MAX_MSG_SIZE, "power_static = %.0lf, power_accel = %.0lf", power_static, power_accel);
@@ -596,7 +617,7 @@ static void *ANT_Thread(void *arg)
 
                 power_event_count++;
 
-                power_instant = power_static + power_accel;
+                power_instant = power_static + power_accel_filtered;
 
                 currentPower = power_instant;
 

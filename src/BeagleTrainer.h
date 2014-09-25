@@ -41,4 +41,5 @@
 #define DISPLAY_MAX_MSG_LINES   10
 #define DISPLAY_MAX_MSG_SIZE    80
 
+#define POWER_SAMPLE_DEPTH      4
 
